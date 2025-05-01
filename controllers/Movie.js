@@ -1,6 +1,7 @@
 const { connectToDatabase } = require("../config/db");
 const HttpException = require("../middleware/HttpException");
 const Joi = require("joi");
+const redisClient = require("../config/redis");
 
 const addMovie = async (body) => {
   const schema = Joi.object().keys({
@@ -34,14 +35,43 @@ const addMovie = async (body) => {
   }
 };
 
-const getAllMovies = async () => {
+// const getAllMovies = async () => {
+//   const connection = await connectToDatabase();
+//   // const q = "SELECT * FROM Movie;";
+//   const q =
+//     "SELECT Movie.*, ROUND(AVG(Review.Rating)) AS AvgRating FROM Movie LEFT JOIN Review ON Movie.MovieID = Review.MovieID GROUP BY Movie.MovieID;";
+//   const [rows] = await connection.query(q);
+//   return rows;
+// };
+
+
+const getAllMovies = async (page = 1, limit = 10) => {
+  const cacheKey = `movies_page_${page}_limit_${limit}`;
+  const cachedMovies = await redisClient.get(cacheKey);
+
+  if (cachedMovies) {
+    return JSON.parse(cachedMovies); // Return cached data
+  }
+
   const connection = await connectToDatabase();
-  // const q = "SELECT * FROM Movie;";
-  const q =
-    "SELECT Movie.*, ROUND(AVG(Review.Rating)) AS AvgRating FROM Movie LEFT JOIN Review ON Movie.MovieID = Review.MovieID GROUP BY Movie.MovieID;";
-  const [rows] = await connection.query(q);
+  const offset = (page - 1) * limit;
+
+  const q = `
+    SELECT Movie.*, ROUND(AVG(Review.Rating)) AS AvgRating 
+    FROM Movie 
+    LEFT JOIN Review ON Movie.MovieID = Review.MovieID 
+    GROUP BY Movie.MovieID 
+    LIMIT ? OFFSET ?;
+  `;
+
+  const [rows] = await connection.query(q, [limit, offset]);
+
+  // Cache the result for 1 hour
+  await redisClient.set(cacheKey, JSON.stringify(rows), "EX", 3600);
+
   return rows;
 };
+
 
 const getMovie = async (body) => {
   const connection = await connectToDatabase();
